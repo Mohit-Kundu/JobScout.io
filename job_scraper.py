@@ -1,154 +1,157 @@
+from googlesearch import search
 import json
 import time
-from datetime import datetime, timedelta
-import pytz
-import hashlib
-from googlesearch import search
-import schedule
 import logging
 import os
+from datetime import datetime
+import hashlib
+import pickle
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-class JobScraper:
-    def __init__(self, config_path='config/metadata.json'):
-        self.seen_jobs = set()  # Store hashes of seen jobs
-        self.load_config(config_path)
-        self.setup_timezone()
-        self.last_scrape_time = None  # Track when we last scraped
+class JobCache:
+    def __init__(self, cache_file='cache/jobs.pkl', max_size=100000):
+        self.cache_file = cache_file
+        self.max_size = max_size  # Maximum number of entries
+        self.cache = self.load_cache()
         
-        # Set up logging
-        self.setup_logging()
-
-    def load_config(self, config_path):
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
-        
-        # Convert time strings to time objects
-        self.start_time = datetime.strptime(
-            self.config['start_time'], 
-            '%H:%M:%S'
-        ).time()
-        
-        self.end_time = datetime.strptime(
-            self.config['end_time'], 
-            '%H:%M:%S'
-        ).time()
-
-    def setup_timezone(self):
-        self.timezone = pytz.timezone(self.config['time_zone'])
-
-    def generate_job_hash(self, title, link):
-        """Generate a unique hash for a job based on its title and link"""
-        job_string = f"{title.lower()}{link.lower()}"
+    def load_cache(self):
+        """Load cache from file or create new if doesn't exist"""
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, 'rb') as f:
+                return pickle.load(f)
+        return set()
+    
+    def save_cache(self):
+        """Save cache to file"""
+        os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+        with open(self.cache_file, 'wb') as f:
+            pickle.dump(self.cache, f)
+    
+    def generate_job_hash(self, title, url, description):
+        """Generate a unique hash for a job"""
+        job_string = f"{title.lower()}{url.lower()}{description.lower()}"
         return hashlib.md5(job_string.encode()).hexdigest()
-
-    def is_new_job(self, title, link):
-        """Check if we've seen this job before"""
-        job_hash = self.generate_job_hash(title, link)
-        if job_hash in self.seen_jobs:
-            return False
-        self.seen_jobs.add(job_hash)
-        return True
-
-    def setup_logging(self):
-        # Create logs directory if it doesn't exist
-        if not os.path.exists('logs'):
-            os.makedirs('logs')
+    
+    def cleanup_old_entries(self):
+        """Remove oldest entries if cache exceeds max size"""
+        if len(self.cache) > self.max_size:
+            # Convert to list to remove oldest entries (first entries)
+            as_list = list(self.cache)
+            self.cache = set(as_list[-self.max_size:])
+            self.save_cache()
             
-        # Set up logging configuration
-        log_file = f'logs/job_scraper_{datetime.now().strftime("%Y%m%d")}.log'
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()  # This will also print to console
-            ]
+    def is_duplicate(self, title, url, description):
+        """Check if job is a duplicate"""
+        job_hash = self.generate_job_hash(title, url, description)
+        if job_hash in self.cache:
+            return True
+        self.cache.add(job_hash)
+        self.cleanup_old_entries()  # Check size and cleanup if needed
+        self.save_cache()
+        return False
+
+def setup_logging():
+    # Create logs directory if it doesn't exist
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+        
+    # Set up logging configuration
+    log_file = f'logs/demo_scraper_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()  # This will also print to console
+        ]
+    )
+    return logging.getLogger(__name__)
+
+def load_config(config_path='config/metadata.json'):
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
+def format_job_listing(job_number, job_title, result):
+    """Format a job listing to a readable format"""
+    separator = "=" * 80
+    header = f"\nJob {job_number}:"
+    title = f"Search Query: {job_title}"
+    listing_title = f"Job Title: {result.title if result.title else 'N/A'}"
+    url = f"URL: {result.url if result.url else 'N/A'}"
+    description = f"Description: {result.description if result.description else 'N/A'}"
+    
+    return f"""
+{separator}
+{header}
+{title}
+{listing_title}
+{url}
+{description}
+{separator}
+"""
+
+def scrape_jobs():
+    logger = setup_logging()
+    config = load_config()
+    job_cache = JobCache()
+    
+    logger.info("🔍 Starting job search...")
+    total_jobs_found = 0
+    total_duplicates = 0
+    
+    for job_title in config['job_titles']:
+        logger.info(f"Searching for: {job_title}")
+        
+        search_query = (
+            'site:lever.co OR site:greenhouse.io OR site:myworkdayjobs.com '
+            f'"{job_title}"'
         )
-        self.logger = logging.getLogger(__name__)
-
-    def search_jobs(self):
-        self.logger.info("Starting job search...")
-        current_time = datetime.now(self.timezone)
         
-        # If this is our first run, look back from start_time to current_time
-        if self.last_scrape_time is None:
-            # Get today's start time
-            today = current_time.date()
-            start_datetime = datetime.combine(today, self.start_time)
-            start_datetime = self.timezone.localize(start_datetime)
-            
-            # Use start_time as look_back if current_time is after start_time
-            # Otherwise use previous day's start_time
-            if current_time >= start_datetime:
-                look_back_time = start_datetime
-            else:
-                yesterday = today - timedelta(days=1)
-                look_back_time = datetime.combine(yesterday, self.start_time)
-                look_back_time = self.timezone.localize(look_back_time)
-        else:
-            # Otherwise, just look back one hour from current_time
-            look_back_time = current_time - timedelta(hours=1)
-
-        new_jobs_found = 0
-        
-        for job_title in self.config['job_titles']:
-            search_query = (
-                f'site:lever.co OR site:greenhouse.io OR '
-                f'site:myworkdayjobs.com "{job_title}" '
-                f'after:{int(look_back_time.timestamp())}'
+        try:
+            search_results = search(
+                search_query,
+                num_results=5,
+                lang="en",
+                region=config['region'],
+                advanced=True,
+                unique=True
             )
             
-            try:
-                # Search Google
-                search_results = search(
-                    search_query,
-                    num_results=10,  # Adjust as needed
-                    lang="en"
-                )
-
-                # Process results
-                for link in search_results:
-                    if self.is_new_job(job_title, link):
-                        new_jobs_found += 1
-                        logging.info(f"New Job Found:")
-                        logging.info(f"Title: {job_title}")
-                        logging.info(f"Link: {link}")
-                        logging.info("-" * 50)
-
-                # Add delay to avoid hitting rate limits
-                time.sleep(2)
-
-            except Exception as e:
-                logging.error(f"Error searching for {job_title}: {str(e)}")
-
-        self.last_scrape_time = current_time
-        logging.info(f"Scraping complete. Found {new_jobs_found} new jobs.")
-
-    def is_within_operating_hours(self):
-        # Get current time in configured timezone
-        current_time = datetime.now(self.timezone).time()
-        
-        self.logger.debug(f"Current time: {current_time}")
-        
-        # Check if current time is within operating hours
-        return self.start_time <= current_time <= self.end_time
-
-    def run(self):
-        self.logger.info("Job scraper started")
-        # Schedule the job to run at the specified frequency
-        schedule.every(1).hours.do(self.search_jobs)
-        
-        while True:
-            if self.is_within_operating_hours():
-                schedule.run_pending()
-            time.sleep(60)  # Check every minute
+            jobs_found = 0
+            duplicates = 0
+            
+            for result in search_results:
+                # Check if job is duplicate
+                if job_cache.is_duplicate(
+                    result.title or '',
+                    result.url or '',
+                    result.description or ''
+                ):
+                    duplicates += 1
+                    total_duplicates += 1
+                    logger.debug(f"Duplicate job found: {result.url}")
+                    continue
+                
+                jobs_found += 1
+                total_jobs_found += 1
+                
+                # Format and log the job listing
+                job_listing = format_job_listing(jobs_found, job_title, result)
+                logger.info(job_listing)
+                
+                # Add delay between searches to avoid rate limiting
+                time.sleep(1)
+            
+            logger.info(f"Found {jobs_found} new jobs and {duplicates} duplicates for {job_title}")
+            
+            # Add longer delay between different job title searches
+            time.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"Error occurred while searching for {job_title}: {str(e)}")
+            continue
+    
+    logger.info(f"Search complete. Total new jobs found: {total_jobs_found}")
+    logger.info(f"Total duplicate jobs skipped: {total_duplicates}")
 
 if __name__ == "__main__":
-    scraper = JobScraper()
-    scraper.run() 
+    scrape_jobs() 
