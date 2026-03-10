@@ -1,0 +1,12 @@
+scrape_freq: "30m"
+start_time: "09:00:00"
+end_time: "17:00:00"
+time_zone: "America/New_York"
+region: us
+job_titles:
+  - data scientist
+  - machine learning engineer
+  - software engineer
+  - software developer
+  - forward deployed engineer
+  - computer vision engineer

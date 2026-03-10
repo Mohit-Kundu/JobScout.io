@@ -1,6 +1,6 @@
 # Job Scraper
 
-A Python script that scrapes job listings from multiple job posting platforms (Lever, Greenhouse, and Workday) using Google search.
+A Python script that scrapes job listings from multiple job posting platforms (Lever, Greenhouse, and Workday) using DuckDuckGo search.
 
 ## Features
 
@@ -8,18 +8,17 @@ A Python script that scrapes job listings from multiple job posting platforms (L
   - Lever.co
   - Greenhouse.io
   - Workday
-- Implements caching to avoid duplicate job listings
-- Detailed logging system
-- Configurable job search parameters via JSON config
+- SQLite cache of seen jobs (pruned to last 7 days at startup)
+- CSV output (`jobs.csv`: title, company, ats, url, posted_at, scraped_at)
+- Detailed logging in the `logs/` directory
+- Configurable via `config/config.yaml`
 - Rate limiting protection with built-in delays
-- Detailed logs are saved in the `logs` directory.
 
 ## Prerequisites
 
 - Python 3.x
-- Required Python packages:
-  - google-search (for performing Google searches)
-  - pickle (for caching)
+- Required Python packages (see `requirements.txt`):
+  - ddgs (DuckDuckGo search), schedule, pytz
 
 ## Usage
 
@@ -28,11 +27,16 @@ A Python script that scrapes job listings from multiple job posting platforms (L
 pip install -r requirements.txt
 ```
 
-2. Modify the `config.json` file to configure the job search parameters.
+2. Edit `config/config.yaml` to set job titles, region, and other options.
 
-3. Run the script:
+3. Run the scraper:
 ```bash
-python job_scraper.py
+python main.py
+```
+
+4. Run tests (optional):
+```bash
+pytest test/
 ```
 
 Happy job hunting!

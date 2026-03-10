@@ -1,3 +1,5 @@
-googlesearch-python
+ddgs
+PyYAML
 schedule
-pytz 
+pytz
+pytest
