@@ -1,6 +1,6 @@
-# Job Scraper
+# JobScout.io
 
-A Python script that scrapes job listings from multiple job posting platforms (Lever, Greenhouse, and Workday) using DuckDuckGo search.
+A Python application that scrapes job listings from multiple job posting platforms (Lever, Greenhouse, and Workday) using DuckDuckGo search.
 
 ## Features
 
